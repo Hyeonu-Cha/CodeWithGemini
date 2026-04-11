@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xargs wc:*)",
+      "Bash(grep -r \"roles.json\\\\|CLAUDE.md\\\\|CCB_ROLES\" /c/Users/gotow/.claude/skills --include=*.md)",
+      "Bash(grep -r \"wezterm\\\\|wizterm\" /c/Users/gotow/.claude/skills --include=*.md)",
+      "Bash(find /c/Users/gotow -name wezterm.lua -o -name .wezterm*)",
+      "Bash(grep -r \"token\\\\|cost\\\\|usage\\\\|credit\" /c/Users/gotow/.claude --include=*.json)",
+      "Bash(find /c/Users/gotow -maxdepth 1 -name *.md -o -name *.json)",
+      "Bash(gemini --help)"
+    ]
+  }
+}
