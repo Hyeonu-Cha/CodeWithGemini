@@ -241,10 +241,11 @@ The `execute.txt` prompt explicitly forbids Gemini from reading or writing files
 
 Override the Gemini model via environment variable:
 ```bat
-set GEMINI_MCP_MODEL=gemini-2.5-pro
+set GEMINI_MCP_MODEL=gemini-2.5-pro   # Windows
+export GEMINI_MCP_MODEL=gemini-2.5-pro  # Linux/macOS
 ```
 
-Only alphanumeric, `.`, `-`, `_` characters are accepted — any other value is silently ignored to prevent shell injection.
+Use whatever model name your Gemini CLI supports (e.g. `gemini-2.5-pro`, `gemini-2.0-flash`). If unset, Gemini CLI uses its default model. Only alphanumeric, `.`, `-`, `_` characters are accepted — any other value is silently ignored to prevent shell injection.
 
 ---
 
