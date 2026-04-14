@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pytest
 
 from gemini_mcp.core.parsers import MAX_SPEC_CHARS
-from gemini_mcp.tools import gemini_execute, gemini_review, gemini_ping, _inject_schema_warning, _load_prompt
+from gemini_mcp.tools import gemini_execute, gemini_review, gemini_ping, gemini_plan, _inject_schema_warning, _load_prompt
 
 
 # ── _load_prompt ──────────────────────────────────────────────────────────────
@@ -179,3 +179,53 @@ class TestGeminiPing:
         with patch("gemini_mcp.tools.run_gemini", return_value=json.dumps(error)):
             result = gemini_ping()
         assert json.loads(result)["errorType"] == "geminiError"
+
+
+# ── gemini_plan ───────────────────────────────────────────────────────────────
+
+class TestGeminiPlan:
+    _FULL_RESPONSE = {
+        "taskName": "Build auth module",
+        "objective": {
+            "goal": "Add JWT auth",
+            "nonGoals": "OAuth",
+            "doneWhen": "Users can log in with JWT",
+        },
+        "steps": [
+            {"id": "S1", "title": "Create auth module", "description": "Add jwt logic"}
+        ],
+        "finalDone": ["Users can log in", "Tests pass"],
+    }
+
+    def test_clean_response_no_warnings(self):
+        with _patch_run(self._FULL_RESPONSE):
+            result = gemini_plan(objective="Add auth", requirements="JWT, Python")
+        data = json.loads(result)
+        assert "_schemaWarning" not in data
+        assert data["taskName"] == "Build auth module"
+
+    def test_schema_warning_on_missing_keys(self):
+        with _patch_run({"taskName": "x"}):
+            result = gemini_plan(objective="Add auth", requirements="JWT")
+        data = json.loads(result)
+        assert "_schemaWarning" in data
+
+    def test_non_goals_defaults_to_none(self):
+        with _patch_run(self._FULL_RESPONSE):
+            result = gemini_plan(objective="Add auth", requirements="JWT")
+        data = json.loads(result)
+        assert "taskName" in data
+
+    def test_error_passthrough(self):
+        error = {"errorType": "timeout", "error": "timed out"}
+        with _patch_run(error):
+            result = gemini_plan(objective="Add auth", requirements="JWT")
+        data = json.loads(result)
+        assert data["errorType"] == "timeout"
+        assert "_schemaWarning" not in data
+
+    def test_plan_template_loads(self):
+        prompt = _load_prompt("plan", objective="Build X", requirements="Python", non_goals="none")
+        assert "Build X" in prompt
+        assert "Python" in prompt
+        assert "<<<" not in prompt
