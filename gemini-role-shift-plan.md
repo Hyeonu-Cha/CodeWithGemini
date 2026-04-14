@@ -462,23 +462,22 @@ gemini -p "Create a 3-step plan to build a REST API. Return JSON: {taskName, ste
 
 Criteria: All three return valid parseable JSON with expected fields → proceed.
 
-### Phase 1: Build MCP Server (minimal — design + review only)
-- Implement `gemini_design` and `gemini_review` tools
-- Register in Claude's `settings.json`
-- Test manually: call tools from Claude, verify results
-- Do NOT modify skill files yet
+### ✅ Phase 1: Build MCP Server — COMPLETE (2026-04-14)
+- `gemini_execute`, `gemini_review`, `gemini_ping` implemented
+- Prompt templates, schema validation, retry logic, auth error detection
+- 77 tests passing
+- `tr/references/flow.md` updated to use `gemini_execute` + `gemini_review`
 
-### Phase 2: Update skill files
-- `tr/SKILL.md` — use MCP tools for steps 2, 4, 8
-- `review/SKILL.md` — use `gemini_review` MCP tool
-- Test with a real task
+### ✅ Phase 2: Update skill files — COMPLETE (2026-04-14)
+- `review/SKILL.md` + `flow.md` — replaced Codex cross-review with `gemini_review` MCP tool
+- `tp/SKILL.md` + `flow.md` — replaced FileOpsREQ/Codex delegation with Claude writing `.ccb/` files directly
 
 ### Phase 3: Add planning tool + full integration
 - Implement `gemini_plan` tool
-- Update `tp/SKILL.md` to use `gemini_plan`
+- Update `tp/SKILL.md` to use `gemini_plan` for collaborative design
 - Remove Codex from `ccb.config`
 - Clean up unused skills (`file-op`, Codex-specific logic)
 
 ---
 
-*Plan updated: 2026-04-11. No code changes made. Based on: Claude + Gemini only, MCP Server with Gemini CLI subprocess (`gemini -p -o json -y`), Claude handles file ops natively.*
+*Plan updated: 2026-04-14. Phase 1 and Phase 2 complete.*
