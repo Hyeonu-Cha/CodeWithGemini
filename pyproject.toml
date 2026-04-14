@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gemini-mcp"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = ["mcp>=1.27.0,<2.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["gemini_mcp*"]
+
+[tool.setuptools.package-data]
+gemini_mcp = ["prompts/*.txt"]

@@ -1,0 +1,1 @@
+Respond with exactly this JSON and nothing else: {"status": "ok"}

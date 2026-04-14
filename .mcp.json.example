@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "gemini-builder": {
+      "command": "/path/to/python",
+      "args": ["-m", "gemini_mcp"],
+      "cwd": "/path/to/CodeWithGemini"
+    }
+  }
+}
