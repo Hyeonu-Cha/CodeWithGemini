@@ -7,7 +7,7 @@ import re
 
 from gemini_mcp import mcp
 from gemini_mcp.core.parsers import truncate, MAX_DIFF_CHARS, MAX_OUTPUT_CHARS, MAX_SPEC_CHARS
-from gemini_mcp.core.runner import run_gemini, EXECUTE_TIMEOUT, REVIEW_TIMEOUT
+from gemini_mcp.core.runner import run_gemini, EXECUTE_TIMEOUT, PLAN_TIMEOUT, REVIEW_TIMEOUT
 
 logger = logging.getLogger("gemini_mcp.tools")
 
@@ -16,6 +16,7 @@ _PROMPTS_DIR = pathlib.Path(__file__).parent / "prompts"
 # Required top-level keys for each tool's response.
 _EXECUTE_KEYS = {"status", "filesCreated", "filesModified", "commandsRun", "summary", "issues"}
 _REVIEW_KEYS  = {"verdict", "doneConditionsMet", "issues", "summary"}
+_PLAN_KEYS    = {"taskName", "objective", "steps", "finalDone"}
 
 
 def _load_prompt(name: str, **kwargs) -> str:
@@ -131,6 +132,34 @@ def gemini_review(
 
     result = run_gemini(prompt, working_dir=working_dir, timeout=REVIEW_TIMEOUT)
     return _finalize(result, _REVIEW_KEYS, "gemini_review")
+
+
+@mcp.tool(description=(
+    "Ask Gemini to create an executable task plan from an objective and requirements. "
+    "Returns taskName, objective, ordered steps (id/title/description), and finalDone criteria. "
+    "Pass the result directly to /tp to write state.json and todo.md."
+))
+def gemini_plan(
+    objective: str,
+    requirements: str,
+    non_goals: str | None = None,
+) -> str:
+    """
+    objective    – What the task should achieve (one sentence).
+    requirements – Key constraints, tech stack, or must-haves.
+    non_goals    – What is explicitly out of scope (optional).
+    """
+    logger.info("gemini_plan objective=%r", objective[:80])
+
+    prompt = _load_prompt(
+        "plan",
+        objective=objective,
+        requirements=requirements,
+        non_goals=non_goals or "none",
+    )
+
+    result = run_gemini(prompt, working_dir=None, timeout=PLAN_TIMEOUT)
+    return _finalize(result, _PLAN_KEYS, "gemini_plan")
 
 
 @mcp.tool(description=(

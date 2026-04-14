@@ -17,6 +17,7 @@ logger = logging.getLogger("gemini_mcp.runner")
 # Timeouts (seconds)
 EXECUTE_TIMEOUT = 300   # 5 min — Gemini creates/edits files
 REVIEW_TIMEOUT  = 120   # 2 min
+PLAN_TIMEOUT    = 120   # 2 min
 
 # Resolve gemini binary once at import time so every call uses the full path.
 _GEMINI_BIN = shutil.which("gemini") or "gemini"

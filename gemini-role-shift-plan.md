@@ -472,12 +472,12 @@ Criteria: All three return valid parseable JSON with expected fields → proceed
 - `review/SKILL.md` + `flow.md` — replaced Codex cross-review with `gemini_review` MCP tool
 - `tp/SKILL.md` + `flow.md` — replaced FileOpsREQ/Codex delegation with Claude writing `.ccb/` files directly
 
-### Phase 3: Add planning tool + full integration
-- Implement `gemini_plan` tool
-- Update `tp/SKILL.md` to use `gemini_plan` for collaborative design
-- Remove Codex from `ccb.config`
-- Clean up unused skills (`file-op`, Codex-specific logic)
+### ✅ Phase 3: Add planning tool + full integration — COMPLETE (2026-04-14)
+- `gemini_plan` MCP tool implemented with `plan.txt` prompt template
+- `tp/SKILL.md` + `flow.md` updated to call `gemini_plan` instead of `/all-plan`
+- 82 tests passing
+- Remaining: remove Codex from `ccb.config`, clean up `file-op` skill
 
 ---
 
-*Plan updated: 2026-04-14. Phase 1 and Phase 2 complete.*
+*Plan updated: 2026-04-14. All three phases complete.*
