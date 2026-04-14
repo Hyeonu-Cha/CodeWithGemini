@@ -30,7 +30,11 @@ def _load_prompt(name: str, **kwargs) -> str:
         return text
     table   = {f"<<<{k}>>>": str(v) for k, v in kwargs.items()}
     pattern = re.compile("|".join(re.escape(k) for k in table))
-    return pattern.sub(lambda m: table[m.group()], text)
+    result = pattern.sub(lambda m: table[m.group()], text)
+    remaining = re.findall(r"<<<\w+>>>", result)
+    if remaining:
+        logger.warning("_load_prompt(%r): unfilled placeholders after substitution: %s", name, remaining)
+    return result
 
 
 def _inject_schema_warning(data: dict, required: set[str], tool: str) -> None:

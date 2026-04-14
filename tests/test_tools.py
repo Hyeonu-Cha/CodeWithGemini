@@ -36,6 +36,19 @@ class TestLoadPrompt:
         assert '"status"' in prompt
         assert '"filesCreated"' in prompt
 
+    def test_unfilled_placeholder_logs_warning(self, caplog):
+        import logging
+        with caplog.at_level(logging.WARNING, logger="gemini_mcp.tools"):
+            # Omit safe_spec so <<<safe_spec>>> remains unfilled
+            _load_prompt("execute", working_dir="/tmp", context_files="none")
+        assert any("unfilled placeholders" in r.message for r in caplog.records)
+
+    def test_no_warning_when_all_placeholders_filled(self, caplog):
+        import logging
+        with caplog.at_level(logging.WARNING, logger="gemini_mcp.tools"):
+            _load_prompt("execute", working_dir="/tmp", context_files="none", safe_spec="x")
+        assert not any("unfilled placeholders" in r.message for r in caplog.records)
+
     def test_single_pass_prevents_double_replacement(self):
         # If safe_spec contains <<<context_files>>>, it must NOT be replaced
         # on a subsequent iteration — single-pass regex prevents this.
