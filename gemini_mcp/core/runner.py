@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -7,7 +8,6 @@ import pathlib
 import platform
 import re
 import shutil
-import subprocess
 import time
 
 from gemini_mcp.core.parsers import extract_json
@@ -106,10 +106,59 @@ def _make_cmd() -> tuple[str | list[str], bool]:
     return [_GEMINI_BIN, "-p", " ", "-o", "text", "-y"] + model_args, False
 
 
-def run_gemini(prompt: str, working_dir: str | None = None, timeout: int = 120) -> str:
+async def _run_subprocess(
+    cmd: str | list[str],
+    use_shell: bool,
+    prompt: str,
+    working_dir: str | None,
+    timeout: int,
+) -> tuple[str, str, int]:
+    """Spawn Gemini CLI, pipe prompt via stdin, return (stdout, stderr, returncode).
+
+    Isolated into its own coroutine so tests can patch it without touching
+    asyncio internals. Kills the process if the timeout fires.
+    """
+    input_bytes = prompt.encode("utf-8")
+
+    if use_shell:
+        proc = await asyncio.create_subprocess_shell(
+            cmd,  # type: ignore[arg-type]
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=working_dir,
+        )
+    else:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,  # type: ignore[arg-type]
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=working_dir,
+        )
+
+    try:
+        stdout_b, stderr_b = await asyncio.wait_for(
+            proc.communicate(input=input_bytes),
+            timeout=timeout,
+        )
+    except asyncio.TimeoutError:
+        proc.kill()
+        raise
+
+    return (
+        stdout_b.decode("utf-8", errors="replace").strip(),
+        stderr_b.decode("utf-8", errors="replace").strip(),
+        proc.returncode or 0,
+    )
+
+
+async def run_gemini(prompt: str, working_dir: str | None = None, timeout: int = 120) -> str:
     """Pipe prompt to Gemini CLI via stdin and return its JSON response.
 
     Retries once with a stricter suffix if the first response is not valid JSON.
+    Non-blocking — uses asyncio subprocess so the MCP server stays responsive
+    during long-running Gemini calls.
     """
     if working_dir is not None:
         try:
@@ -125,21 +174,12 @@ def run_gemini(prompt: str, working_dir: str | None = None, timeout: int = 120) 
         for attempt in range(2):  # attempt 0 = initial, attempt 1 = retry
             current_prompt = prompt if attempt == 0 else prompt + _RETRY_SUFFIX
 
-            result = subprocess.run(
-                cmd,
-                shell=use_shell,
-                input=current_prompt,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",   # explicit — avoids cp1252 crash on Windows
-                timeout=timeout,
-                cwd=working_dir,
+            output, stderr, returncode = await _run_subprocess(
+                cmd, use_shell, current_prompt, working_dir, timeout,
             )
-            output  = result.stdout.strip()
             elapsed = time.monotonic() - start
 
-            if result.returncode != 0 and not output:
-                stderr = result.stderr.strip()
+            if returncode != 0 and not output:
                 if _is_auth_error(stderr):
                     logger.warning("authExpired attempt=%d elapsed=%.1fs", attempt + 1, elapsed)
                     return json.dumps({
@@ -152,11 +192,11 @@ def run_gemini(prompt: str, working_dir: str | None = None, timeout: int = 120) 
                     })
                 logger.warning(
                     "geminiError code=%d attempt=%d elapsed=%.1fs stderr=%s",
-                    result.returncode, attempt + 1, elapsed, stderr[:200],
+                    returncode, attempt + 1, elapsed, stderr[:200],
                 )
                 return json.dumps({
                     "errorType": "geminiError",
-                    "error": f"Gemini exited with code {result.returncode}: {stderr}",
+                    "error": f"Gemini exited with code {returncode}: {stderr}",
                 })
 
             try:
@@ -180,7 +220,7 @@ def run_gemini(prompt: str, working_dir: str | None = None, timeout: int = 120) 
                 logger.info("parseError on attempt 1 — retrying with stricter prompt")
                 # fall through to retry
 
-    except subprocess.TimeoutExpired:
+    except asyncio.TimeoutError:
         elapsed = time.monotonic() - start
         logger.warning("timeout attempt=%d elapsed=%.1fs limit=%ds", attempt + 1, elapsed, timeout)
         return json.dumps({

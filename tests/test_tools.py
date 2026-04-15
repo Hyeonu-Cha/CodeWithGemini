@@ -1,11 +1,21 @@
 """Tests for gemini_mcp.tools — contracts, warnings, and schema validation."""
 import json
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from gemini_mcp.core.parsers import MAX_SPEC_CHARS
 from gemini_mcp.tools import gemini_execute, gemini_review, gemini_ping, gemini_plan, _inject_schema_warning, _load_prompt
+
+
+# ── helpers ───────────────────────────────────────────────────────────────────
+
+def _patch_run(response: dict):
+    """Patch run_gemini with an AsyncMock returning the given dict as JSON."""
+    return patch(
+        "gemini_mcp.tools.run_gemini",
+        new=AsyncMock(return_value=json.dumps(response)),
+    )
 
 
 # ── _load_prompt ──────────────────────────────────────────────────────────────
@@ -32,14 +42,12 @@ class TestLoadPrompt:
 
     def test_json_braces_preserved_in_execute(self):
         prompt = _load_prompt("execute", working_dir="/tmp", context_files="none", safe_spec="x")
-        # The JSON schema example must survive with literal braces intact
         assert '"status"' in prompt
         assert '"filesCreated"' in prompt
 
     def test_unfilled_placeholder_logs_warning(self, caplog):
         import logging
         with caplog.at_level(logging.WARNING, logger="gemini_mcp.tools"):
-            # Omit safe_spec so <<<safe_spec>>> remains unfilled
             _load_prompt("execute", working_dir="/tmp", context_files="none")
         assert any("unfilled placeholders" in r.message for r in caplog.records)
 
@@ -50,15 +58,12 @@ class TestLoadPrompt:
         assert not any("unfilled placeholders" in r.message for r in caplog.records)
 
     def test_single_pass_prevents_double_replacement(self):
-        # If safe_spec contains <<<context_files>>>, it must NOT be replaced
-        # on a subsequent iteration — single-pass regex prevents this.
         prompt = _load_prompt(
             "execute",
             working_dir="/tmp",
             context_files="none",
             safe_spec="use <<<context_files>>> as reference",
         )
-        # The injected value should appear literally, not be re-replaced
         assert "use <<<context_files>>> as reference" in prompt
 
 
@@ -84,10 +89,6 @@ class TestInjectSchemaWarning:
 
 # ── gemini_execute ────────────────────────────────────────────────────────────
 
-def _patch_run(response: dict):
-    return patch("gemini_mcp.tools.run_gemini", return_value=json.dumps(response))
-
-
 class TestGeminiExecute:
     _FULL_RESPONSE = {
         "status": "success",
@@ -98,45 +99,45 @@ class TestGeminiExecute:
         "issues": [],
     }
 
-    def test_clean_response_no_warnings(self):
+    async def test_clean_response_no_warnings(self):
         with _patch_run(self._FULL_RESPONSE):
-            result = gemini_execute(spec="build X", working_dir="/tmp")
+            result = await gemini_execute(spec="build X", working_dir="/tmp")
         data = json.loads(result)
         assert "_schemaWarning" not in data
         assert "_warning" not in data
 
-    def test_spec_truncation_injects_warning(self):
+    async def test_spec_truncation_injects_warning(self):
         long_spec = "x" * (MAX_SPEC_CHARS + 1)
         with _patch_run(self._FULL_RESPONSE):
-            result = gemini_execute(spec=long_spec, working_dir="/tmp")
+            result = await gemini_execute(spec=long_spec, working_dir="/tmp")
         data = json.loads(result)
         assert "_warning" in data
         assert "truncated" in data["_warning"]
 
-    def test_no_truncation_warning_for_short_spec(self):
+    async def test_no_truncation_warning_for_short_spec(self):
         with _patch_run(self._FULL_RESPONSE):
-            result = gemini_execute(spec="short spec", working_dir="/tmp")
+            result = await gemini_execute(spec="short spec", working_dir="/tmp")
         data = json.loads(result)
         assert "_warning" not in data
 
-    def test_schema_warning_on_missing_keys(self):
-        with _patch_run({"status": "success"}):  # missing 5 required keys
-            result = gemini_execute(spec="build X", working_dir="/tmp")
+    async def test_schema_warning_on_missing_keys(self):
+        with _patch_run({"status": "success"}):
+            result = await gemini_execute(spec="build X", working_dir="/tmp")
         data = json.loads(result)
         assert "_schemaWarning" in data
 
-    def test_error_response_passes_through_without_schema_check(self):
+    async def test_error_response_passes_through_without_schema_check(self):
         error = {"errorType": "timeout", "error": "timed out"}
         with _patch_run(error):
-            result = gemini_execute(spec="build X", working_dir="/tmp")
+            result = await gemini_execute(spec="build X", working_dir="/tmp")
         data = json.loads(result)
         assert data["errorType"] == "timeout"
         assert "_schemaWarning" not in data
 
-    def test_both_truncation_and_schema_warning_coexist(self):
+    async def test_both_truncation_and_schema_warning_coexist(self):
         long_spec = "x" * (MAX_SPEC_CHARS + 1)
-        with _patch_run({"status": "partial"}):  # missing keys + truncated spec
-            result = gemini_execute(spec=long_spec, working_dir="/tmp")
+        with _patch_run({"status": "partial"}):
+            result = await gemini_execute(spec=long_spec, working_dir="/tmp")
         data = json.loads(result)
         assert "_warning" in data
         assert "_schemaWarning" in data
@@ -152,26 +153,26 @@ class TestGeminiReview:
         "summary": "All good.",
     }
 
-    def test_clean_response_no_schema_warning(self):
+    async def test_clean_response_no_schema_warning(self):
         with _patch_run(self._FULL_RESPONSE):
-            result = gemini_review(
+            result = await gemini_review(
                 step_title="S1", done_conditions="tests pass", changed_files="foo.py"
             )
         data = json.loads(result)
         assert "_schemaWarning" not in data
 
-    def test_schema_warning_on_missing_keys(self):
-        with _patch_run({"verdict": "PASS"}):  # missing 3 required keys
-            result = gemini_review(
+    async def test_schema_warning_on_missing_keys(self):
+        with _patch_run({"verdict": "PASS"}):
+            result = await gemini_review(
                 step_title="S1", done_conditions="tests pass", changed_files="foo.py"
             )
         data = json.loads(result)
         assert "_schemaWarning" in data
 
-    def test_error_response_passes_through(self):
+    async def test_error_response_passes_through(self):
         error = {"errorType": "parseError", "error": "bad json", "rawOutput": "..."}
         with _patch_run(error):
-            result = gemini_review(
+            result = await gemini_review(
                 step_title="S1", done_conditions="ok", changed_files="foo.py"
             )
         data = json.loads(result)
@@ -182,15 +183,15 @@ class TestGeminiReview:
 # ── gemini_ping ───────────────────────────────────────────────────────────────
 
 class TestGeminiPing:
-    def test_success(self):
-        with patch("gemini_mcp.tools.run_gemini", return_value='{"status": "ok"}'):
-            result = gemini_ping()
+    async def test_success(self):
+        with patch("gemini_mcp.tools.run_gemini", new=AsyncMock(return_value='{"status": "ok"}')):
+            result = await gemini_ping()
         assert json.loads(result) == {"status": "ok"}
 
-    def test_error_passthrough(self):
+    async def test_error_passthrough(self):
         error = {"errorType": "geminiError", "error": "not authenticated"}
-        with patch("gemini_mcp.tools.run_gemini", return_value=json.dumps(error)):
-            result = gemini_ping()
+        with patch("gemini_mcp.tools.run_gemini", new=AsyncMock(return_value=json.dumps(error))):
+            result = await gemini_ping()
         assert json.loads(result)["errorType"] == "geminiError"
 
 
@@ -210,29 +211,29 @@ class TestGeminiPlan:
         "finalDone": ["Users can log in", "Tests pass"],
     }
 
-    def test_clean_response_no_warnings(self):
+    async def test_clean_response_no_warnings(self):
         with _patch_run(self._FULL_RESPONSE):
-            result = gemini_plan(objective="Add auth", requirements="JWT, Python")
+            result = await gemini_plan(objective="Add auth", requirements="JWT, Python")
         data = json.loads(result)
         assert "_schemaWarning" not in data
         assert data["taskName"] == "Build auth module"
 
-    def test_schema_warning_on_missing_keys(self):
+    async def test_schema_warning_on_missing_keys(self):
         with _patch_run({"taskName": "x"}):
-            result = gemini_plan(objective="Add auth", requirements="JWT")
+            result = await gemini_plan(objective="Add auth", requirements="JWT")
         data = json.loads(result)
         assert "_schemaWarning" in data
 
-    def test_non_goals_defaults_to_none(self):
+    async def test_non_goals_defaults_to_none(self):
         with _patch_run(self._FULL_RESPONSE):
-            result = gemini_plan(objective="Add auth", requirements="JWT")
+            result = await gemini_plan(objective="Add auth", requirements="JWT")
         data = json.loads(result)
         assert "taskName" in data
 
-    def test_error_passthrough(self):
+    async def test_error_passthrough(self):
         error = {"errorType": "timeout", "error": "timed out"}
         with _patch_run(error):
-            result = gemini_plan(objective="Add auth", requirements="JWT")
+            result = await gemini_plan(objective="Add auth", requirements="JWT")
         data = json.loads(result)
         assert data["errorType"] == "timeout"
         assert "_schemaWarning" not in data

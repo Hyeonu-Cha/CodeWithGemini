@@ -62,7 +62,7 @@ def _finalize(result: str, required: set[str], tool: str) -> str:
     "Returns a structured execution report: status, filesCreated, filesModified, "
     "commandsRun, summary, issues. Feed this report directly into gemini_review."
 ))
-def gemini_execute(
+async def gemini_execute(
     spec: str,
     working_dir: str,
     context_files: str | None = None,
@@ -84,7 +84,7 @@ def gemini_execute(
         safe_spec=safe_spec,
     )
 
-    result = run_gemini(prompt, working_dir=working_dir, timeout=EXECUTE_TIMEOUT)
+    result = await run_gemini(prompt, working_dir=working_dir, timeout=EXECUTE_TIMEOUT)
     result = _finalize(result, _EXECUTE_KEYS, "gemini_execute")
 
     if spec_truncated:
@@ -107,7 +107,7 @@ def gemini_execute(
     "gemini_execute's filesCreated + filesModified as changed_files. "
     "Returns verdict (PASS/FIX/BLOCKED), per-condition results, issues with fixes, and a summary."
 ))
-def gemini_review(
+async def gemini_review(
     step_title: str,
     done_conditions: str,
     changed_files: str,
@@ -134,7 +134,7 @@ def gemini_review(
         safe_output=truncate(execution_output, MAX_OUTPUT_CHARS, "executionOutput"),
     )
 
-    result = run_gemini(prompt, working_dir=working_dir, timeout=REVIEW_TIMEOUT)
+    result = await run_gemini(prompt, working_dir=working_dir, timeout=REVIEW_TIMEOUT)
     return _finalize(result, _REVIEW_KEYS, "gemini_review")
 
 
@@ -143,7 +143,7 @@ def gemini_review(
     "Returns taskName, objective, ordered steps (id/title/description), and finalDone criteria. "
     "Pass the result directly to /tp to write state.json and todo.md."
 ))
-def gemini_plan(
+async def gemini_plan(
     objective: str,
     requirements: str,
     non_goals: str | None = None,
@@ -162,7 +162,7 @@ def gemini_plan(
         non_goals=non_goals or "none",
     )
 
-    result = run_gemini(prompt, working_dir=None, timeout=PLAN_TIMEOUT)
+    result = await run_gemini(prompt, working_dir=None, timeout=PLAN_TIMEOUT)
     return _finalize(result, _PLAN_KEYS, "gemini_plan")
 
 
@@ -171,7 +171,7 @@ def gemini_plan(
     "Returns {\"status\": \"ok\"} on success, or a structured error response. "
     "Call this before starting real work to catch auth issues early."
 ))
-def gemini_ping() -> str:
+async def gemini_ping() -> str:
     """Lightweight health check — runs a minimal prompt with a 30s timeout."""
     logger.info("gemini_ping")
-    return run_gemini(_load_prompt("ping"), timeout=30)
+    return await run_gemini(_load_prompt("ping"), timeout=30)
