@@ -1,5 +1,7 @@
 You are a software project planner. Create a clear, executable task plan for the following objective.
 
+IMPORTANT: Do not use any file tools. Return only the JSON plan — no file reads or writes.
+
 Objective: <<<objective>>>
 Requirements: <<<requirements>>>
 Non-goals: <<<non_goals>>>

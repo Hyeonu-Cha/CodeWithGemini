@@ -197,3 +197,43 @@ class TestValidatedModel:
     def test_space_rejected(self, monkeypatch):
         monkeypatch.setattr(runner_mod, "_MODEL", "model name")
         assert runner_mod._validated_model() is None
+
+
+# ── _make_cmd ─────────────────────────────────────────────────────────────────
+
+class TestMakeCmd:
+    def test_windows_returns_shell_string(self, monkeypatch):
+        monkeypatch.setattr(runner_mod.platform, "system", lambda: "Windows")
+        monkeypatch.setattr(runner_mod, "_MODEL", None)
+        cmd, use_shell = runner_mod._make_cmd()
+        assert use_shell is True
+        assert isinstance(cmd, str)
+        assert "-p" in cmd and "-o text" in cmd and "-y" in cmd
+
+    def test_windows_includes_model(self, monkeypatch):
+        monkeypatch.setattr(runner_mod.platform, "system", lambda: "Windows")
+        monkeypatch.setattr(runner_mod, "_MODEL", "gemini-2.5-pro")
+        cmd, use_shell = runner_mod._make_cmd()
+        assert use_shell is True
+        assert "gemini-2.5-pro" in cmd
+
+    def test_non_windows_returns_list(self, monkeypatch):
+        monkeypatch.setattr(runner_mod.platform, "system", lambda: "Linux")
+        monkeypatch.setattr(runner_mod, "_MODEL", None)
+        cmd, use_shell = runner_mod._make_cmd()
+        assert use_shell is False
+        assert isinstance(cmd, list)
+        assert "-y" in cmd
+
+    def test_non_windows_includes_model_as_list_args(self, monkeypatch):
+        monkeypatch.setattr(runner_mod.platform, "system", lambda: "Linux")
+        monkeypatch.setattr(runner_mod, "_MODEL", "gemini-2.5-pro")
+        cmd, use_shell = runner_mod._make_cmd()
+        assert use_shell is False
+        assert "-m" in cmd and "gemini-2.5-pro" in cmd
+
+    def test_invalid_model_excluded_from_cmd(self, monkeypatch):
+        monkeypatch.setattr(runner_mod.platform, "system", lambda: "Linux")
+        monkeypatch.setattr(runner_mod, "_MODEL", "bad;model")
+        cmd, _ = runner_mod._make_cmd()
+        assert "-m" not in cmd
