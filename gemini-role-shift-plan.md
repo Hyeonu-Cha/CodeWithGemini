@@ -63,11 +63,11 @@ Planning (`/tp`): ~3000–6000 output tokens per task.
 ┌─────────────────────────────────────────────────────┐
 │  Gemini MCP Server (background process)              │
 │                                                      │
-│  Tools:                                              │
+│  Tools (implemented):                                │
 │  • gemini_plan(objective, requirements)              │
-│  • gemini_design(step, context)                      │
+│  • gemini_execute(spec, working_dir)                 │
 │  • gemini_review(diff, done_conditions)              │
-│  • gemini_build_spec(design, context)                │
+│  • gemini_ping()                                     │
 │                                                      │
 │  Each tool spawns:                                   │
 │    gemini -p "..." -o json -y                        │
@@ -86,6 +86,10 @@ The FileOpsREQ protocol and autoloop daemon are no longer needed in this archite
 ---
 
 ## 4. MCP Server: Tools Design
+
+> **Note**: The original plan specified `gemini_design` and `gemini_build_spec` as separate tools.
+> These were consolidated into `gemini_execute` — Claude designs the spec natively (cheap, ~50 tokens)
+> and Gemini executes it. The separate design/spec tools were not needed.
 
 ### 4.1 `gemini_plan`
 **Purpose**: Replace Claude's all-plan/tp flow

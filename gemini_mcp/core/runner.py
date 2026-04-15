@@ -14,10 +14,10 @@ from gemini_mcp.core.parsers import extract_json
 
 logger = logging.getLogger("gemini_mcp.runner")
 
-# Timeouts (seconds)
-EXECUTE_TIMEOUT = 300   # 5 min — Gemini creates/edits files
-REVIEW_TIMEOUT  = 120   # 2 min
-PLAN_TIMEOUT    = 120   # 2 min
+# Timeouts (seconds) — override via GEMINI_MCP_*_TIMEOUT env vars
+EXECUTE_TIMEOUT = int(os.environ.get("GEMINI_MCP_EXECUTE_TIMEOUT", 300))
+REVIEW_TIMEOUT  = int(os.environ.get("GEMINI_MCP_REVIEW_TIMEOUT",  120))
+PLAN_TIMEOUT    = int(os.environ.get("GEMINI_MCP_PLAN_TIMEOUT",    120))
 
 # Resolve gemini binary once at import time so every call uses the full path.
 _GEMINI_BIN = shutil.which("gemini") or "gemini"

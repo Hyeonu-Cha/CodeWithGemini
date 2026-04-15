@@ -1,4 +1,5 @@
 import logging
+import logging.handlers
 import os
 import pathlib
 import shutil
@@ -15,7 +16,9 @@ _log_dir.mkdir(exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    handlers=[logging.FileHandler(_log_dir / "gemini-mcp.log", encoding="utf-8")],
+    handlers=[logging.handlers.RotatingFileHandler(
+        _log_dir / "gemini-mcp.log", maxBytes=5_000_000, backupCount=3, encoding="utf-8",
+    )],
 )
 
 _logger = logging.getLogger("gemini_mcp")
