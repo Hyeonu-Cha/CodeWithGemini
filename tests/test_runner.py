@@ -231,3 +231,70 @@ class TestMakeCmd:
         monkeypatch.setattr(runner_mod, "_MODEL", "bad;model")
         cmd, _ = runner_mod._make_cmd()
         assert "-m" not in cmd
+
+
+# ── _run_subprocess ───────────────────────────────────────────────────────────
+
+class TestRunSubprocess:
+    async def test_returns_stdout_stderr_returncode(self, tmp_path):
+        """_run_subprocess decodes bytes and returns (stdout, stderr, returncode)."""
+        import asyncio
+
+        class _FakeProc:
+            returncode = 0
+            async def communicate(self, input=None):
+                return b'{"status": "ok"}', b""
+            def kill(self): pass
+
+        with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=_FakeProc())):
+            stdout, stderr, rc = await runner_mod._run_subprocess(
+                ["gemini", "-p", " "], False, "prompt", str(tmp_path), 30
+            )
+        assert stdout == '{"status": "ok"}'
+        assert stderr == ""
+        assert rc == 0
+
+    async def test_kills_process_on_timeout(self, tmp_path):
+        """Process is killed when asyncio.wait_for raises TimeoutError."""
+        import asyncio
+
+        killed = []
+
+        class _SlowProc:
+            returncode = None
+            async def communicate(self, input=None):  # pragma: no cover
+                await asyncio.sleep(999)
+            def kill(self):
+                killed.append(True)
+
+        async def fake_wait_for(coro, timeout):
+            raise asyncio.TimeoutError
+
+        with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=_SlowProc())):
+            with patch("asyncio.wait_for", side_effect=fake_wait_for):
+                with pytest.raises(asyncio.TimeoutError):
+                    await runner_mod._run_subprocess(
+                        ["gemini", "-p", " "], False, "prompt", str(tmp_path), 1
+                    )
+        assert killed, "process.kill() was not called on timeout"
+
+    async def test_shell_true_uses_create_subprocess_shell(self, tmp_path):
+        """Windows path: use_shell=True calls create_subprocess_shell, not exec."""
+        import asyncio
+
+        class _FakeProc:
+            returncode = 0
+            async def communicate(self, input=None):
+                return b'{"ok": true}', b""
+            def kill(self): pass
+
+        shell_mock = AsyncMock(return_value=_FakeProc())
+        exec_mock  = AsyncMock(return_value=_FakeProc())
+
+        with patch("asyncio.create_subprocess_shell", shell_mock):
+            with patch("asyncio.create_subprocess_exec", exec_mock):
+                await runner_mod._run_subprocess(
+                    '"gemini.cmd" -p " " -y', True, "prompt", str(tmp_path), 30
+                )
+        shell_mock.assert_called_once()
+        exec_mock.assert_not_called()
