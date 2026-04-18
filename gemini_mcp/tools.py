@@ -7,7 +7,13 @@ import re
 
 from gemini_mcp import mcp
 from gemini_mcp.core.parsers import truncate, MAX_DIFF_CHARS, MAX_OUTPUT_CHARS, MAX_SPEC_CHARS
-from gemini_mcp.core.runner import run_gemini, EXECUTE_TIMEOUT, PLAN_TIMEOUT, REVIEW_TIMEOUT
+from gemini_mcp.core.runner import (
+    run_gemini,
+    EXECUTE_TIMEOUT,
+    PLAN_TIMEOUT,
+    REVIEW_TIMEOUT,
+    PING_TIMEOUT,
+)
 
 logger = logging.getLogger("gemini_mcp.tools")
 
@@ -87,6 +93,9 @@ async def gemini_execute(
     result = await run_gemini(prompt, working_dir=working_dir, timeout=EXECUTE_TIMEOUT)
     result = _finalize(result, _EXECUTE_KEYS, "gemini_execute")
 
+    # Attach truncation warning on both success and error paths — an oversized
+    # spec often contributes to timeouts/parse failures, and the caller needs
+    # that signal to diagnose the root cause.
     if spec_truncated:
         try:
             data = json.loads(result)
@@ -96,7 +105,7 @@ async def gemini_execute(
             )
             result = json.dumps(data)
         except json.JSONDecodeError:
-            pass
+            logger.warning("spec truncated but result was not JSON; warning dropped")
 
     return result
 
@@ -172,6 +181,6 @@ async def gemini_plan(
     "Call this before starting real work to catch auth issues early."
 ))
 async def gemini_ping() -> str:
-    """Lightweight health check — runs a minimal prompt with a 30s timeout."""
+    """Lightweight health check — runs a minimal prompt with a short timeout."""
     logger.info("gemini_ping")
-    return await run_gemini(_load_prompt("ping"), timeout=30)
+    return await run_gemini(_load_prompt("ping"), timeout=PING_TIMEOUT)

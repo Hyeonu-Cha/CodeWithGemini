@@ -82,6 +82,15 @@ class TestRunGemini:
         assert data["errorType"] == "geminiError"
         assert "something broke" in data["error"]
 
+    async def test_nonzero_exit_with_stdout_still_returns_gemini_error(self, tmp_path):
+        """Non-zero exit must be treated as failure even if stdout has JSON.
+        Parsing a failing process's stdout can mask real errors."""
+        with _mock_sub(stdout='{"status": "success"}', returncode=1, stderr="quota exceeded"):
+            result = await run_gemini("prompt", working_dir=str(tmp_path))
+        data = json.loads(result)
+        assert data["errorType"] == "geminiError"
+        assert "quota exceeded" in data["error"]
+
     async def test_auth_error_unauthenticated(self, tmp_path):
         with _mock_sub(returncode=1, stderr="UNAUTHENTICATED: invalid credentials"):
             result = await run_gemini("prompt", working_dir=str(tmp_path))
@@ -117,6 +126,50 @@ class TestRunGemini:
         with patch("gemini_mcp.core.runner._run_subprocess", mock):
             result = await run_gemini("prompt", working_dir=str(tmp_path))
         assert json.loads(result) == {"status": "ok"}
+
+    async def test_retry_prompt_echoes_previous_failing_output(self, tmp_path):
+        """On retry, the prompt must include the previous bad output so the
+        model can self-correct rather than regenerate blind."""
+        bad_output = "Here's the plan: step 1, step 2, step 3."
+        captured_prompts = []
+
+        async def fake_sub(cmd, use_shell, prompt, working_dir, timeout):
+            captured_prompts.append(prompt)
+            if len(captured_prompts) == 1:
+                return (bad_output, "", 0)
+            return ('{"status": "ok"}', "", 0)
+
+        with patch("gemini_mcp.core.runner._run_subprocess", side_effect=fake_sub):
+            result = await run_gemini("do the thing", working_dir=str(tmp_path))
+
+        assert json.loads(result) == {"status": "ok"}
+        assert len(captured_prompts) == 2
+        # First attempt: clean prompt, no retry suffix
+        assert bad_output not in captured_prompts[0]
+        assert "PREVIOUS RESPONSE" not in captured_prompts[0]
+        # Second attempt: includes the failing output so Gemini can fix it
+        assert bad_output in captured_prompts[1]
+        assert "PREVIOUS RESPONSE" in captured_prompts[1]
+
+    async def test_retry_prompt_truncates_large_previous_output(self, tmp_path):
+        """Very long prior output is clipped so the retry prompt stays bounded."""
+        huge = "x" * 5000
+        captured_prompts = []
+
+        async def fake_sub(cmd, use_shell, prompt, working_dir, timeout):
+            captured_prompts.append(prompt)
+            if len(captured_prompts) == 1:
+                return (huge, "", 0)
+            return ('{"status": "ok"}', "", 0)
+
+        with patch("gemini_mcp.core.runner._run_subprocess", side_effect=fake_sub):
+            await run_gemini("do the thing", working_dir=str(tmp_path))
+
+        retry_prompt = captured_prompts[1]
+        assert "[truncated]" in retry_prompt
+        # Only ~500 chars of the huge output should appear in the retry prompt,
+        # not the full 5000.
+        assert retry_prompt.count("x") < 1000
 
     async def test_parse_error_after_retry_returns_error(self, tmp_path):
         with _mock_sub(stdout="not json"):
@@ -163,6 +216,26 @@ class TestRunGemini:
         with _mock_sub(stdout='{"ok": true}'):
             result = await run_gemini("émojis: 🎉 漢字 Ünïcödé", working_dir=str(tmp_path))
         assert json.loads(result) == {"ok": True}
+
+
+# ── _timeout_env ──────────────────────────────────────────────────────────────
+
+class TestTimeoutEnv:
+    def test_default_when_unset(self, monkeypatch):
+        monkeypatch.delenv("GEMINI_MCP_FOO_TIMEOUT", raising=False)
+        assert runner_mod._timeout_env("GEMINI_MCP_FOO_TIMEOUT", 123.0) == 123.0
+
+    def test_integer_value_parsed(self, monkeypatch):
+        monkeypatch.setenv("GEMINI_MCP_FOO_TIMEOUT", "45")
+        assert runner_mod._timeout_env("GEMINI_MCP_FOO_TIMEOUT", 0.0) == 45.0
+
+    def test_float_value_parsed(self, monkeypatch):
+        monkeypatch.setenv("GEMINI_MCP_FOO_TIMEOUT", "30.5")
+        assert runner_mod._timeout_env("GEMINI_MCP_FOO_TIMEOUT", 0.0) == 30.5
+
+    def test_invalid_value_falls_back_to_default(self, monkeypatch):
+        monkeypatch.setenv("GEMINI_MCP_FOO_TIMEOUT", "not-a-number")
+        assert runner_mod._timeout_env("GEMINI_MCP_FOO_TIMEOUT", 99.0) == 99.0
 
 
 # ── _validated_model ──────────────────────────────────────────────────────────
