@@ -41,26 +41,39 @@ _MODEL = os.environ.get("GEMINI_MCP_MODEL")
 # Optional: restrict working_dir to a subtree (e.g. "C:\\Users\\gotow").
 _ALLOWED_ROOT = os.environ.get("GEMINI_MCP_ALLOWED_ROOT")
 
-# Max chars of the previous failing output to echo back on retry.
-# Enough to show the shape of the error; small enough to not balloon the prompt.
-_RETRY_ECHO_CHARS = 500
+# Retry prompt echoes the previous output head AND tail — JSON parse errors
+# cluster near the end (unclosed brace, trailing prose), so head-only truncation
+# is likely to hide the actual problem.
+_RETRY_HEAD_CHARS = 500
+_RETRY_TAIL_CHARS = 500
 
 
-def _retry_suffix(prev_output: str) -> str:
+def _retry_snippet(output: str) -> str:
+    """Return output unchanged if short; otherwise head + elision + tail."""
+    total = _RETRY_HEAD_CHARS + _RETRY_TAIL_CHARS
+    if len(output) <= total:
+        return output
+    head   = output[:_RETRY_HEAD_CHARS]
+    tail   = output[-_RETRY_TAIL_CHARS:]
+    elided = len(output) - total
+    return f"{head}\n...[{elided} chars elided]...\n{tail}"
+
+
+def _retry_suffix(prev_output: str, parse_error: str | None) -> str:
     """Build a retry instruction that includes the last failing output.
 
-    LLMs fix JSON errors far more reliably when shown what they said previously,
-    so they can correct the specific mistake (unclosed brace, stray prose, etc.)
+    LLMs fix JSON errors far more reliably when shown what they said previously
+    AND a pointer to the specific parse failure, so they can correct the mistake
     rather than regenerating from scratch.
     """
-    snippet = prev_output[:_RETRY_ECHO_CHARS]
-    truncated_note = " [truncated]" if len(prev_output) > _RETRY_ECHO_CHARS else ""
+    snippet    = _retry_snippet(prev_output)
+    error_hint = f"Parse failure: {parse_error}\n\n" if parse_error else ""
     return (
         "\n\nIMPORTANT: Your previous response (shown below) could not be parsed as JSON. "
         "Respond with ONLY the JSON object — no explanation, no markdown fences, no extra text. "
-        "Identify what broke the parse (missing brace, stray prose, unescaped quote, etc.) "
-        "and return a corrected version.\n\n"
-        f"--- PREVIOUS RESPONSE{truncated_note} ---\n{snippet}\n--- END PREVIOUS RESPONSE ---"
+        "Fix the specific problem flagged below and return a corrected version.\n\n"
+        f"{error_hint}"
+        f"--- PREVIOUS RESPONSE ---\n{snippet}\n--- END PREVIOUS RESPONSE ---"
     )
 
 # Stderr substrings (case-insensitive) that indicate an auth/credential failure.
@@ -197,13 +210,17 @@ async def run_gemini(prompt: str, working_dir: str | None = None, timeout: float
             return json.dumps({"errorType": "validationError", "error": str(exc)})
 
     cmd, use_shell = _make_cmd()
-    start       = time.monotonic()
-    attempt     = 0
-    prev_output = ""
+    start            = time.monotonic()
+    attempt          = 0
+    prev_output      = ""
+    prev_parse_error: str | None = None
 
     try:
         for attempt in range(2):  # attempt 0 = initial, attempt 1 = retry
-            current_prompt = prompt if attempt == 0 else prompt + _retry_suffix(prev_output)
+            current_prompt = (
+                prompt if attempt == 0
+                else prompt + _retry_suffix(prev_output, prev_parse_error)
+            )
 
             output, stderr, returncode = await _run_subprocess(
                 cmd, use_shell, current_prompt, working_dir, timeout,
@@ -240,19 +257,29 @@ async def run_gemini(prompt: str, working_dir: str | None = None, timeout: float
                     attempt + 1, elapsed, len(prompt),
                 )
                 return parsed
-            except ValueError:
+            except ValueError as exc:
+                # JSONDecodeError (subclass of ValueError) carries pos/line/col,
+                # which we thread into the retry prompt so the model knows
+                # exactly where it went wrong rather than having to rediscover.
+                if isinstance(exc, json.JSONDecodeError):
+                    parse_error = f"{exc.msg} at line {exc.lineno} column {exc.colno} (char {exc.pos})"
+                else:
+                    parse_error = str(exc)
+
                 if attempt == 1:  # exhausted retries
                     logger.warning(
-                        "parseError after retry elapsed=%.1fs rawOutput=%.100s",
-                        elapsed, output,
+                        "parseError after retry elapsed=%.1fs err=%s rawOutput=%.100s",
+                        elapsed, parse_error, output,
                     )
                     return json.dumps({
                         "errorType": "parseError",
                         "error": "Gemini did not return valid JSON after retry.",
+                        "parseError": parse_error,
                         "rawOutput": output[:500],
                     })
-                logger.info("parseError on attempt 1 — retrying with previous output echoed back")
-                prev_output = output  # remembered for _retry_suffix on next iteration
+                logger.info("parseError on attempt 1 (%s) — retrying with echo", parse_error)
+                prev_output      = output       # for _retry_suffix on next iteration
+                prev_parse_error = parse_error  # surfaced to Gemini as a pointer
                 # fall through to retry
 
         # Defensive fallthrough: every branch above should return within the

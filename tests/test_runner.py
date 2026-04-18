@@ -166,10 +166,69 @@ class TestRunGemini:
             await run_gemini("do the thing", working_dir=str(tmp_path))
 
         retry_prompt = captured_prompts[1]
-        assert "[truncated]" in retry_prompt
-        # Only ~500 chars of the huge output should appear in the retry prompt,
-        # not the full 5000.
-        assert retry_prompt.count("x") < 1000
+        assert "chars elided" in retry_prompt
+        # head + tail == 1000 chars of output, plus elision marker — far less
+        # than the 5000-char input.
+        assert retry_prompt.count("x") < 1500
+
+    async def test_retry_prompt_shows_tail_of_large_output(self, tmp_path):
+        """The tail of the previous output must be visible on retry — JSON
+        parse errors typically live near the end, so head-only truncation
+        would hide them."""
+        # Distinctive head and tail so we can tell which part survives.
+        head   = "HEAD_MARKER_" + "a" * 400
+        middle = "m" * 3000
+        tail   = "b" * 400 + "_TAIL_MARKER"
+        bad    = head + middle + tail
+        captured_prompts = []
+
+        async def fake_sub(cmd, use_shell, prompt, working_dir, timeout):
+            captured_prompts.append(prompt)
+            if len(captured_prompts) == 1:
+                return (bad, "", 0)
+            return ('{"status": "ok"}', "", 0)
+
+        with patch("gemini_mcp.core.runner._run_subprocess", side_effect=fake_sub):
+            await run_gemini("do the thing", working_dir=str(tmp_path))
+
+        retry_prompt = captured_prompts[1]
+        assert "HEAD_MARKER_" in retry_prompt
+        assert "_TAIL_MARKER" in retry_prompt
+        assert "chars elided" in retry_prompt
+
+    async def test_retry_prompt_surfaces_parse_error_position(self, tmp_path):
+        """When the previous output was structurally invalid JSON, the retry
+        prompt must include the parse error message so Gemini can target the
+        fix instead of regenerating blind."""
+        # Trailing comma inside the object — json.loads raises JSONDecodeError
+        # with a position pointer, which we want to surface to Gemini.
+        bad_json = '{"status": "ok", "items": [1, 2, 3,]}'
+        captured_prompts = []
+
+        async def fake_sub(cmd, use_shell, prompt, working_dir, timeout):
+            captured_prompts.append(prompt)
+            if len(captured_prompts) == 1:
+                return (bad_json, "", 0)
+            return ('{"status": "ok"}', "", 0)
+
+        with patch("gemini_mcp.core.runner._run_subprocess", side_effect=fake_sub):
+            result = await run_gemini("do the thing", working_dir=str(tmp_path))
+
+        # The retry must succeed because attempt-2 returns clean JSON.
+        assert json.loads(result) == {"status": "ok"}
+        retry_prompt = captured_prompts[1]
+        assert "Parse failure:" in retry_prompt
+        # JSONDecodeError message should mention line/column/char position.
+        assert "line" in retry_prompt and "column" in retry_prompt
+
+    async def test_parse_error_response_includes_position(self, tmp_path):
+        """The final parseError response exposes the position info so the
+        caller (Claude) can diagnose without re-running the tool."""
+        with _mock_sub(stdout="not json at all"):
+            result = await run_gemini("prompt", working_dir=str(tmp_path))
+        data = json.loads(result)
+        assert data["errorType"] == "parseError"
+        assert "parseError" in data  # field carrying the diagnostic
 
     async def test_parse_error_after_retry_returns_error(self, tmp_path):
         with _mock_sub(stdout="not json"):
