@@ -28,7 +28,9 @@ config = {
 }
 
 out = script_dir / ".mcp.json"
-out.write_text(json.dumps(config, indent=2))
+# Force utf-8: on Windows, write_text falls back to cp1252 which can mangle
+# paths containing non-ASCII characters (e.g. localized usernames).
+out.write_text(json.dumps(config, indent=2), encoding="utf-8")
 print("Written .mcp.json")
 print(f"  python : {python_exe}")
 print(f"  gemini : {gemini_bin}")

@@ -216,26 +216,32 @@ All tools return structured JSON on failure:
 | `authExpired` | Gemini returned an auth error — re-authenticate by running `gemini` interactively |
 | `geminiError` | Gemini exited non-zero (check `error` and `stderr` fields) |
 | `parseError` | Gemini did not return valid JSON after one retry (`rawOutput` shows what it said) |
-| `timeout` | Gemini did not respond within the timeout (plan: 120s, execute: 300s, review: 120s) |
+| `timeout` | Gemini did not respond within the timeout (plan: 120s, execute: 300s, review: 120s, ping: 30s — all overridable via `GEMINI_MCP_*_TIMEOUT`) |
 | `runError` | Unexpected exception in the server process |
 
 ---
 
 ## Security
 
-**Path restriction (optional)**
+> **Important — this server does not sandbox Gemini.** Gemini CLI is invoked with `-y` (auto-approve all tool uses). Once Gemini starts, its built-in file tools can read or write **any absolute path** the invoking OS user can reach — not just paths under `working_dir`. The `cwd=working_dir` argument only sets where Gemini *starts*. For true isolation, run the MCP server inside a container, VM, or a user account with restricted filesystem permissions.
 
-By default `working_dir` is validated to exist and be a directory. To also restrict it to a subtree:
+**Path restriction (optional, limited scope)**
+
+`GEMINI_MCP_ALLOWED_ROOT` restricts the `working_dir` that Claude can hand to Gemini — it does **not** bound what Gemini can touch afterwards.
 
 ```bat
 set GEMINI_MCP_ALLOWED_ROOT=C:\Users\yourname\projects
 ```
 
-Any `working_dir` outside that root will be rejected with a `validationError` before Gemini is invoked.
+Any `working_dir` outside that root will be rejected with a `validationError` before Gemini is invoked. This prevents Claude from pointing Gemini at, say, `C:\Windows`, but it cannot stop a spec (or a prompt-injection in a context file) from instructing Gemini to write elsewhere once running.
 
-**Prompt-level boundary**
+**Prompt-level boundary (defence-in-depth only)**
 
-The `execute.txt` prompt explicitly forbids Gemini from reading or writing files outside `working_dir`, providing a defence-in-depth layer on top of `GEMINI_MCP_ALLOWED_ROOT`.
+The `execute.txt` prompt instructs Gemini to refuse file operations outside `working_dir`. This is best-effort — Gemini will generally honour it but it is not an enforcement mechanism. Treat it as a helpful nudge, not a security control.
+
+**Startup warning**
+
+If `GEMINI_MCP_ALLOWED_ROOT` is unset, the server logs a warning on startup (visible in `~/.ccb/gemini-mcp.log`) to remind you that no path restriction is active.
 
 **Model override**
 
