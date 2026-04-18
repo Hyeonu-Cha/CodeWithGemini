@@ -82,6 +82,15 @@ class TestRunGemini:
         assert data["errorType"] == "geminiError"
         assert "something broke" in data["error"]
 
+    async def test_nonzero_exit_with_stdout_still_returns_gemini_error(self, tmp_path):
+        """Non-zero exit must be treated as failure even if stdout has JSON.
+        Parsing a failing process's stdout can mask real errors."""
+        with _mock_sub(stdout='{"status": "success"}', returncode=1, stderr="quota exceeded"):
+            result = await run_gemini("prompt", working_dir=str(tmp_path))
+        data = json.loads(result)
+        assert data["errorType"] == "geminiError"
+        assert "quota exceeded" in data["error"]
+
     async def test_auth_error_unauthenticated(self, tmp_path):
         with _mock_sub(returncode=1, stderr="UNAUTHENTICATED: invalid credentials"):
             result = await run_gemini("prompt", working_dir=str(tmp_path))
@@ -117,6 +126,109 @@ class TestRunGemini:
         with patch("gemini_mcp.core.runner._run_subprocess", mock):
             result = await run_gemini("prompt", working_dir=str(tmp_path))
         assert json.loads(result) == {"status": "ok"}
+
+    async def test_retry_prompt_echoes_previous_failing_output(self, tmp_path):
+        """On retry, the prompt must include the previous bad output so the
+        model can self-correct rather than regenerate blind."""
+        bad_output = "Here's the plan: step 1, step 2, step 3."
+        captured_prompts = []
+
+        async def fake_sub(cmd, use_shell, prompt, working_dir, timeout):
+            captured_prompts.append(prompt)
+            if len(captured_prompts) == 1:
+                return (bad_output, "", 0)
+            return ('{"status": "ok"}', "", 0)
+
+        with patch("gemini_mcp.core.runner._run_subprocess", side_effect=fake_sub):
+            result = await run_gemini("do the thing", working_dir=str(tmp_path))
+
+        assert json.loads(result) == {"status": "ok"}
+        assert len(captured_prompts) == 2
+        # First attempt: clean prompt, no retry suffix
+        assert bad_output not in captured_prompts[0]
+        assert "PREVIOUS RESPONSE" not in captured_prompts[0]
+        # Second attempt: includes the failing output so Gemini can fix it
+        assert bad_output in captured_prompts[1]
+        assert "PREVIOUS RESPONSE" in captured_prompts[1]
+
+    async def test_retry_prompt_truncates_large_previous_output(self, tmp_path):
+        """Very long prior output is clipped so the retry prompt stays bounded."""
+        huge = "x" * 5000
+        captured_prompts = []
+
+        async def fake_sub(cmd, use_shell, prompt, working_dir, timeout):
+            captured_prompts.append(prompt)
+            if len(captured_prompts) == 1:
+                return (huge, "", 0)
+            return ('{"status": "ok"}', "", 0)
+
+        with patch("gemini_mcp.core.runner._run_subprocess", side_effect=fake_sub):
+            await run_gemini("do the thing", working_dir=str(tmp_path))
+
+        retry_prompt = captured_prompts[1]
+        assert "chars elided" in retry_prompt
+        # head + tail == 1000 chars of output, plus elision marker — far less
+        # than the 5000-char input.
+        assert retry_prompt.count("x") < 1500
+
+    async def test_retry_prompt_shows_tail_of_large_output(self, tmp_path):
+        """The tail of the previous output must be visible on retry — JSON
+        parse errors typically live near the end, so head-only truncation
+        would hide them."""
+        # Distinctive head and tail so we can tell which part survives.
+        head   = "HEAD_MARKER_" + "a" * 400
+        middle = "m" * 3000
+        tail   = "b" * 400 + "_TAIL_MARKER"
+        bad    = head + middle + tail
+        captured_prompts = []
+
+        async def fake_sub(cmd, use_shell, prompt, working_dir, timeout):
+            captured_prompts.append(prompt)
+            if len(captured_prompts) == 1:
+                return (bad, "", 0)
+            return ('{"status": "ok"}', "", 0)
+
+        with patch("gemini_mcp.core.runner._run_subprocess", side_effect=fake_sub):
+            await run_gemini("do the thing", working_dir=str(tmp_path))
+
+        retry_prompt = captured_prompts[1]
+        assert "HEAD_MARKER_" in retry_prompt
+        assert "_TAIL_MARKER" in retry_prompt
+        assert "chars elided" in retry_prompt
+
+    async def test_retry_prompt_surfaces_parse_error_position(self, tmp_path):
+        """When the previous output was structurally invalid JSON, the retry
+        prompt must include the parse error message so Gemini can target the
+        fix instead of regenerating blind."""
+        # Trailing comma inside the object — json.loads raises JSONDecodeError
+        # with a position pointer, which we want to surface to Gemini.
+        bad_json = '{"status": "ok", "items": [1, 2, 3,]}'
+        captured_prompts = []
+
+        async def fake_sub(cmd, use_shell, prompt, working_dir, timeout):
+            captured_prompts.append(prompt)
+            if len(captured_prompts) == 1:
+                return (bad_json, "", 0)
+            return ('{"status": "ok"}', "", 0)
+
+        with patch("gemini_mcp.core.runner._run_subprocess", side_effect=fake_sub):
+            result = await run_gemini("do the thing", working_dir=str(tmp_path))
+
+        # The retry must succeed because attempt-2 returns clean JSON.
+        assert json.loads(result) == {"status": "ok"}
+        retry_prompt = captured_prompts[1]
+        assert "Parse failure:" in retry_prompt
+        # JSONDecodeError message should mention line/column/char position.
+        assert "line" in retry_prompt and "column" in retry_prompt
+
+    async def test_parse_error_response_includes_position(self, tmp_path):
+        """The final parseError response exposes the position info so the
+        caller (Claude) can diagnose without re-running the tool."""
+        with _mock_sub(stdout="not json at all"):
+            result = await run_gemini("prompt", working_dir=str(tmp_path))
+        data = json.loads(result)
+        assert data["errorType"] == "parseError"
+        assert "parseError" in data  # field carrying the diagnostic
 
     async def test_parse_error_after_retry_returns_error(self, tmp_path):
         with _mock_sub(stdout="not json"):
@@ -163,6 +275,26 @@ class TestRunGemini:
         with _mock_sub(stdout='{"ok": true}'):
             result = await run_gemini("émojis: 🎉 漢字 Ünïcödé", working_dir=str(tmp_path))
         assert json.loads(result) == {"ok": True}
+
+
+# ── _timeout_env ──────────────────────────────────────────────────────────────
+
+class TestTimeoutEnv:
+    def test_default_when_unset(self, monkeypatch):
+        monkeypatch.delenv("GEMINI_MCP_FOO_TIMEOUT", raising=False)
+        assert runner_mod._timeout_env("GEMINI_MCP_FOO_TIMEOUT", 123.0) == 123.0
+
+    def test_integer_value_parsed(self, monkeypatch):
+        monkeypatch.setenv("GEMINI_MCP_FOO_TIMEOUT", "45")
+        assert runner_mod._timeout_env("GEMINI_MCP_FOO_TIMEOUT", 0.0) == 45.0
+
+    def test_float_value_parsed(self, monkeypatch):
+        monkeypatch.setenv("GEMINI_MCP_FOO_TIMEOUT", "30.5")
+        assert runner_mod._timeout_env("GEMINI_MCP_FOO_TIMEOUT", 0.0) == 30.5
+
+    def test_invalid_value_falls_back_to_default(self, monkeypatch):
+        monkeypatch.setenv("GEMINI_MCP_FOO_TIMEOUT", "not-a-number")
+        assert runner_mod._timeout_env("GEMINI_MCP_FOO_TIMEOUT", 99.0) == 99.0
 
 
 # ── _validated_model ──────────────────────────────────────────────────────────

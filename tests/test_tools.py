@@ -194,6 +194,17 @@ class TestGeminiPing:
             result = await gemini_ping()
         assert json.loads(result)["errorType"] == "geminiError"
 
+    async def test_uses_ping_timeout_constant(self):
+        """ping must use PING_TIMEOUT, not a hardcoded value."""
+        from gemini_mcp.core.runner import PING_TIMEOUT
+        captured = {}
+        async def fake_run(prompt, working_dir=None, timeout=None):
+            captured["timeout"] = timeout
+            return '{"status": "ok"}'
+        with patch("gemini_mcp.tools.run_gemini", side_effect=fake_run):
+            await gemini_ping()
+        assert captured["timeout"] == PING_TIMEOUT
+
 
 # ── gemini_plan ───────────────────────────────────────────────────────────────
 

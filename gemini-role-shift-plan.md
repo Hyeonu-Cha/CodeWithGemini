@@ -87,9 +87,7 @@ The FileOpsREQ protocol and autoloop daemon are no longer needed in this archite
 
 ## 4. MCP Server: Tools Design
 
-> **Note**: The original plan specified `gemini_design` and `gemini_build_spec` as separate tools.
-> These were consolidated into `gemini_execute` — Claude designs the spec natively (cheap, ~50 tokens)
-> and Gemini executes it. The separate design/spec tools were not needed.
+> **Scope note**: Sections 4.2 and 4.3 below (`gemini_design`, `gemini_build_spec`) are **rejected designs** kept for historical context only. They were consolidated into `gemini_execute` — Claude designs the spec natively (cheap, ~50 tokens) and Gemini executes it. These tools are not implemented and will not be. Skip straight to 4.1 and 4.4 for the shipped surface.
 
 ### 4.1 `gemini_plan`
 **Purpose**: Replace Claude's all-plan/tp flow
@@ -115,7 +113,7 @@ The FileOpsREQ protocol and autoloop daemon are no longer needed in this archite
 
 ---
 
-### 4.2 `gemini_design`
+### 4.2 `gemini_design` — REJECTED (not implemented)
 **Purpose**: Replace Claude's step 2.1 independent design
 **Input**:
 ```json
@@ -145,7 +143,7 @@ The FileOpsREQ protocol and autoloop daemon are no longer needed in this archite
 
 ---
 
-### 4.3 `gemini_build_spec`
+### 4.3 `gemini_build_spec` — REJECTED (not implemented)
 **Purpose**: Replace Claude's step 4 — turn design into concrete implementation spec
 **Input**:
 ```json
