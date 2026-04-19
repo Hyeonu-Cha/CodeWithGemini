@@ -1,6 +1,6 @@
 # CodeBridgeMCP
 
-An MCP server that bridges Claude and Gemini CLI, reducing Claude's output token usage by ~84% by delegating planning, file creation, and code review to Gemini.
+An MCP server that bridges Claude and Gemini CLI, reducing Claude's output token usage by delegating planning, file creation, and code review to Gemini.
 
 **Architecture: Claude = Architect, Gemini = Builder**
 
@@ -28,7 +28,7 @@ Gemini CLI (subprocess)
     └── reads/writes files autonomously in working_dir
 ```
 
-Claude generates ~50 tokens (a tool call). Gemini generates the plan or code. Without this, Claude would generate ~2300–3800 output tokens per step writing the code itself.
+Claude generates only a short tool call. Gemini generates the plan or code. Without this, Claude would spend far more output tokens writing the code itself.
 
 ---
 
@@ -257,13 +257,9 @@ Use whatever model name your Gemini CLI supports (e.g. `gemini-2.5-pro`, `gemini
 
 ## Token Savings
 
-| Workflow | Before | After | Reduction |
-|----------|--------|-------|-----------|
-| Per `/tr` step | ~2300–3800 output tokens | ~540 | **~85%** |
-| Per `/tp` plan | ~3000–6000 output tokens | ~450 | **~87%** |
-| Per `/review` | ~800–1200 output tokens | ~180 | **~83%** |
+Delegating planning, file generation, and review to Gemini shifts the bulk of output-token cost off Claude. Exact savings depend on the step and codebase — benchmarks are still being collected.
 
-Output tokens cost ~10x more than input tokens. Gemini's responses are read back by Claude as input tokens (cheap).
+Output tokens cost significantly more than input tokens, and Gemini's responses come back to Claude as input tokens (cheap).
 
 ---
 
